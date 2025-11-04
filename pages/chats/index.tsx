@@ -12,7 +12,6 @@ import {
   doc,
   limit,
   getDoc,
-  getDocs,
 } from "firebase/firestore";
 import Layout from "../../components/Layout";
 
@@ -22,6 +21,7 @@ interface Chat {
   lastMessage: string;
   updatedAt?: any;
   botPersonality?: string;
+  botProfile?: any;
   otherUid?: string;
   other?: any;
 }
@@ -30,6 +30,8 @@ export default function ChatsListPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [chats, setChats] = useState<Chat[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>("");
 
   // Track auth
   useEffect(() => {
@@ -37,103 +39,127 @@ export default function ChatsListPage() {
     return () => unsub();
   }, []);
 
-  // Load chats (safe: requires auth + array-contains filter)
- // replace your current "Load chats" useEffect with this
-useEffect(() => {
-  if (!user) return;
+  // Load chats
+  useEffect(() => {
+    if (!user) return;
 
-  let unsub: (() => void) | null = null;
-  let cancelled = false;
+    console.log("Setting up chat listener for user:", user.uid);
+    setLoading(true);
+    setError("");
 
-  const attachListener = async (attempt = 0) => {
-    console.log("[debug] attachListener attempt:", attempt, "user.uid:", user?.uid, "user.email:", user?.email);
-    if (cancelled) return;
-    if (!user?.uid) {
-      console.warn("[debug] no user.uid yet - aborting attach");
-      return;
-    }
+    const q = query(
+      collection(db, "chats"),
+      where("participants", "array-contains", user.uid),
+      orderBy("updatedAt", "desc"),
+      limit(100) // REQUIRED by your Firestore rules
+    );
 
-    // Try to ensure token is ready (best-effort)
-    try {
-      if (typeof user.getIdToken === "function") {
-        const t = await user.getIdToken(false).catch(() => null);
-        console.log("[debug] getIdToken available:", !!t);
-      }
-    } catch (e) {
-      console.warn("[debug] getIdToken error:", e);
-    }
-
-    // One-off read test (not a realtime listen) to inspect permissions & doc shape
-    try {
-      console.log("[debug] Running one-off getDocs test for chats...");
-      const qTest = query(
-        collection(db, "chats"),
-        where("participants", "array-contains", user.uid),
-        orderBy("updatedAt", "desc"),
-        limit(5)
-      );
-      const snap = await getDocs(qTest);
-      console.log("[debug] getDocs test succeeded, docCount:", snap.size);
-      if (!snap.empty) {
-        const first = snap.docs[0].data();
-        console.log("[debug] first chat sample data:", first);
-        console.log("[debug] participants sample:", first.participants);
-      } else {
-        console.log("[debug] getDocs returned 0 docs (no chats for this user)");
-      }
-    } catch (err) {
-      console.error("[debug] one-off getDocs error (permission or query issue):", err);
-    }
-
-    // Attach real realtime listener
-    try {
-      const q = query(
-        collection(db, "chats"),
-        where("participants", "array-contains", user.uid),
-        orderBy("updatedAt", "desc"),
-        limit(100)
-      );
-
-      unsub = onSnapshot(
-        q,
-        async (snapshot) => {
-          try {
-            if (snapshot.empty) {
-              setChats([]);
-              return;
-            }
-            const chatDocs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-            // same enrichment as before...
-            // (keep existing enrichment logic you have)
-          } catch (e) {
-            console.error("[debug] error processing snapshot:", e);
-          }
-        },
-        (err) => {
-          console.error("chats onSnapshot error (pages/chats/index.tsx):", err);
-          // do not retry here — we want to inspect the exact err
+    const unsub = onSnapshot(
+      q,
+      async (snapshot) => {
+        console.log("Chats snapshot received, docs:", snapshot.size);
+        
+        if (snapshot.empty) {
+          console.log("No chats found for user");
+          setChats([]);
+          setLoading(false);
+          return;
         }
-      );
-    } catch (err) {
-      console.error("[debug] failed to attach onSnapshot:", err);
-    }
-  };
 
-  attachListener();
+        try {
+          const chatDocs = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          })) as Chat[];
 
-  return () => {
-    cancelled = true;
-    if (unsub) unsub();
-  };
-}, [user]);
+          console.log("Processing", chatDocs.length, "chats");
 
+          // Enrich with other participant info
+          const enriched = await Promise.all(
+            chatDocs.map(async (chat) => {
+              try {
+                // Find the other participant (not the current user)
+                const otherUid = chat.participants.find((p) => p !== user.uid);
+                
+                if (!otherUid) {
+                  console.warn("No other participant found for chat", chat.id);
+                  return chat;
+                }
 
+                // Try to get their profile
+                let otherProfile: any = null;
+
+                // First check if botProfile is embedded in the chat
+                if (chat.botProfile) {
+                  otherProfile = chat.botProfile;
+                } else {
+                  // Otherwise fetch from users collection
+                  try {
+                    const userRef = doc(db, "users", otherUid);
+                    const userSnap = await getDoc(userRef);
+                    
+                    if (userSnap.exists()) {
+                      const userData = userSnap.data();
+                      otherProfile = {
+                        name: userData.name || "Unknown",
+                        avatar: userData.avatar || "/logo.png",
+                        status: userData.status || "offline",
+                      };
+                    }
+                  } catch (err) {
+                    console.warn("Failed to fetch user profile for", otherUid, err);
+                  }
+                }
+
+                // Fallback if we still don't have a profile
+                if (!otherProfile) {
+                  otherProfile = {
+                    name: "Unknown Companion",
+                    avatar: "/logo.png",
+                    status: "offline",
+                  };
+                }
+
+                return {
+                  ...chat,
+                  otherUid,
+                  other: otherProfile,
+                };
+              } catch (err) {
+                console.error("Error enriching chat", chat.id, err);
+                return chat;
+              }
+            })
+          );
+
+          console.log("Enriched chats:", enriched);
+          setChats(enriched);
+          setLoading(false);
+        } catch (err) {
+          console.error("Error processing chats snapshot:", err);
+          setError("Error loading chats");
+          setLoading(false);
+        }
+      },
+      (err) => {
+        console.error("Chats onSnapshot error:", err);
+        setError(`Permission error: ${err.message}`);
+        setLoading(false);
+      }
+    );
+
+    return () => unsub();
+  }, [user]);
 
   // Format date
   const formatDate = (ts: any) => {
     if (!ts) return "";
-    const d = ts.toDate();
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    try {
+      const d = ts.toDate();
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "";
+    }
   };
 
   if (!user) {
@@ -151,8 +177,26 @@ useEffect(() => {
       <div className="min-h-screen bg-black text-white p-6">
         <h1 className="text-2xl font-bold mb-6">Your Chats</h1>
 
-        {chats.length === 0 ? (
-          <p className="text-gray-400">No chats yet. Go to Profiles to start one!</p>
+        {loading ? (
+          <p className="text-gray-400">Loading chats...</p>
+        ) : error ? (
+          <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-4">
+            <p className="text-red-400 font-semibold">Error:</p>
+            <p className="text-red-300 text-sm mt-1">{error}</p>
+            <p className="text-gray-400 text-xs mt-2">
+              Check your browser console for more details.
+            </p>
+          </div>
+        ) : chats.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-gray-400 mb-4">No chats yet. Start a conversation!</p>
+            <button
+              onClick={() => router.push("/profiles")}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition"
+            >
+              Browse Companions
+            </button>
+          </div>
         ) : (
           <div className="space-y-4">
             {chats.map((chat) => (
@@ -162,12 +206,14 @@ useEffect(() => {
                 className="flex items-center gap-3 bg-gray-900 hover:bg-gray-800 rounded-xl p-4 cursor-pointer transition"
               >
                 <img
-                  src={chat.other?.avatar || "/icons/default.png"}
+                  src={chat.other?.avatar || "/logo.png"}
                   alt={chat.other?.name || "Companion"}
                   className="w-12 h-12 rounded-full object-cover"
                 />
                 <div className="flex-1">
-                  <div className="font-semibold">{chat.other?.name || "Unknown"}</div>
+                  <div className="font-semibold">
+                    {chat.other?.name || "Unknown Companion"}
+                  </div>
                   <div className="text-sm text-gray-400 truncate">
                     {chat.lastMessage || "No messages yet"}
                   </div>

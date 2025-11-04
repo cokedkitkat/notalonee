@@ -1,100 +1,54 @@
-// pages/dashboard.tsx
+// pages/dashboard.tsx - WORKING VERSION
 import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth, db } from "../lib/firebaseConfig";
+import { auth } from "../lib/firebaseConfig";
 import DashboardCard from "../components/DashboardCard";
 import { FaRobot, FaGamepad, FaUsers } from "react-icons/fa";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  getDocs,
-  orderBy,
-  limit,
-  doc,
-} from "firebase/firestore";
 
 export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [authReady, setAuthReady] = useState(false);
 
-  // Track auth
+  // Track auth and wait for it to be fully ready
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) {
         router.push("/login");
       } else {
+        console.log("User authenticated:", u.uid);
+        
+        // Wait for token to be ready
+        try {
+          await u.getIdToken(false);
+          console.log("Auth token ready");
+        } catch (e) {
+          console.warn("Token not immediately available");
+        }
+        
         setUser(u);
+        setAuthReady(true);
       }
     });
     return () => unsub();
   }, [router]);
 
-  // Listen for chats (safe) and compute unread messages by checking latest message per chat
-  useEffect(() => {
-    if (!user) return;
-
-    const q = query(
-      collection(db, "chats"),
-      where("participants", "array-contains", user.uid),
-      orderBy("updatedAt", "desc"),
-      limit(100)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      async (snapshot) => {
-        try {
-          const chatDocs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-          // For each chat, fetch the latest message (limit 1) and check readBy
-          const unreadChecks = chatDocs.map(async (chat: any) => {
-            try {
-              const messagesQ = query(
-                collection(db, "chats", chat.id, "messages"),
-                orderBy("timestamp", "desc"),
-                limit(1)
-              );
-              const msgSnap = await getDocs(messagesQ);
-              if (msgSnap.empty) return 0;
-              const latest = msgSnap.docs[0].data() as any;
-              // If readBy doesn't include user.uid and sender isn't the user, count as unread
-              if (
-                latest &&
-                (!latest.readBy || !latest.readBy.includes(user.uid)) &&
-                latest.senderUid !== user.uid &&
-                latest.sender !== user.email // fallback if senderUid absent
-              ) {
-                return 1;
-              }
-              return 0;
-            } catch (err) {
-              console.error("Error fetching latest message for chat", chat.id, err);
-              return 0;
-            }
-          });
-
-          const results = await Promise.all(unreadChecks);
-          const total = results.reduce<number>((s, v) => s + v, 0);
-          setUnreadCount(total);
-        } catch (err) {
-          console.error("Dashboard snapshot processing error:", err);
-        }
-      },
-      (err) => {
-        console.error("Dashboard onSnapshot error:", err);
-      }
-    );
-
-    return () => unsub();
-  }, [user]);
-
   const handleLogout = async () => {
     await signOut(auth);
     router.push("/login");
   };
+
+  if (!authReady || !user) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-gray-400">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-white font-raleway flex flex-col">
@@ -104,49 +58,79 @@ export default function Dashboard() {
           <img src="/logo.png" alt="Logo" className="h-10" />
           <h1 className="text-xl font-bold">NOT ALONE</h1>
         </div>
-        <button
-          onClick={handleLogout}
-          className="px-4 py-2 bg-gray-800 rounded-lg hover:bg-gray-700"
-        >
-          Logout
-        </button>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-gray-400">
+            {user.email}
+          </span>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition"
+          >
+            Logout
+          </button>
+        </div>
       </header>
 
       {/* Greeting */}
       <main className="flex-1 flex flex-col items-center text-center px-6 py-10">
         <h2 className="text-3xl font-semibold mb-2">Hey, welcome back 👋</h2>
         <p className="text-gray-400 mb-10">
-          Here’s what’s happening in your world today…
+          Ready to connect? Choose what you'd like to do today…
         </p>
 
         {/* Cards grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl w-full">
           <DashboardCard
-            title="Chats"
-            description={
-              unreadCount > 0
-                ? `💬 You’ve got ${unreadCount} new message${
-                    unreadCount > 1 ? "s" : ""
-                  } waiting.`
-                : "💬 All caught up! No new messages."
-            }
+            title="Browse Companions"
+            description="💬 Discover AI companions and start meaningful conversations"
+            link="/profiles"
+            icon={<FaRobot />}
+            color="bg-gradient-to-br from-blue-900 to-blue-800"
+          />
+
+          <DashboardCard
+            title="Your Chats"
+            description="💭 Continue your conversations and connect with companions"
             link="/chats"
             icon={<FaRobot />}
+            color="bg-gradient-to-br from-purple-900 to-purple-800"
           />
 
           <DashboardCard
             title="Games"
-            description="🎮 Last time, Funny Bot beat you in TicTacToe. Want revenge?"
+            description="🎮 Challenge companions to fun games and activities"
             link="/games"
             icon={<FaGamepad />}
+            color="bg-gradient-to-br from-green-900 to-green-800"
           />
 
           <DashboardCard
             title="Community"
-            description="🌍 5 new posts since you last visited. Go see what’s up!"
+            description="🌍 Connect with others and explore the community"
             link="/community"
             icon={<FaUsers />}
+            color="bg-gradient-to-br from-pink-900 to-pink-800"
           />
+        </div>
+
+        {/* Quick Stats */}
+        <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl w-full">
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-blue-400">0</div>
+            <div className="text-xs text-gray-500 mt-1">Active Chats</div>
+          </div>
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-purple-400">0</div>
+            <div className="text-xs text-gray-500 mt-1">Games Played</div>
+          </div>
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-green-400">0</div>
+            <div className="text-xs text-gray-500 mt-1">Friends</div>
+          </div>
+          <div className="bg-gray-900 rounded-lg p-4 text-center">
+            <div className="text-2xl font-bold text-pink-400">New</div>
+            <div className="text-xs text-gray-500 mt-1">Member</div>
+          </div>
         </div>
       </main>
     </div>

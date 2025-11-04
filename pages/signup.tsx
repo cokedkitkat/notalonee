@@ -6,17 +6,13 @@ import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
-  getIdToken,
   onAuthStateChanged,
 } from "firebase/auth";
 import {
   doc,
   setDoc,
+  getDoc,
   serverTimestamp,
-  getDocs,
-  collection,
-  query,
-  where,
 } from "firebase/firestore";
 import Link from "next/link";
 import { FaGoogle } from "react-icons/fa";
@@ -27,139 +23,134 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const redirectUser = async (uid: string) => {
+  const createUserProfile = async (uid: string, email: string, displayName?: string) => {
+    console.log("Creating user profile for:", uid);
+    
     try {
-      const q = query(
-        collection(db, "chats"),
-        where("participants", "array-contains", uid)
-      );
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        router.push("/profiles");
-      } else {
-        router.push("/chats");
+      // Check if profile already exists
+      const userRef = doc(db, "users", uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        console.log("User profile already exists");
+        return;
       }
-    } catch (err: any) {
-      console.error("redirectUser error:", err);
-      // fallback
-      router.push("/profiles");
-    }
-  };
 
-  const createUserProfile = async (uid: string, email: string) => {
-    const userRef = doc(db, "users", uid);
-    await setDoc(userRef, {
-      name: email.split("@")[0],
-      avatar: "/icons/default.png",
-      bio: "Hey there! I'm new here 👋",
-      personality: "",
-      isBot: false,
-      createdAt: serverTimestamp(),
-    });
-  };
-
-  // Wait until auth.currentUser appears and/or token is available
-  const waitForAuthPropagation = async (expectedUid: string, timeout = 7000) => {
-    const start = Date.now();
-
-    // quick check if already present
-    if (auth.currentUser && auth.currentUser.uid === expectedUid) {
-      try {
-        await getIdToken(auth.currentUser, /* forceRefresh= */ false);
-        return true;
-      } catch {}
-    }
-
-    return new Promise<boolean>((resolve) => {
-      const unsub = onAuthStateChanged(auth, async (u) => {
-        if (u && u.uid === expectedUid) {
-          try {
-            // try to get token (ensures token attached for Firestore rules)
-            await getIdToken(u, /* forceRefresh= */ true);
-            unsub();
-            resolve(true);
-          } catch (tokErr) {
-            // token not ready yet — but we'll still resolve true to proceed with caution
-            console.warn("waitForAuthPropagation: token not ready but user found", tokErr);
-            unsub();
-            resolve(true);
-          }
-        } else if (Date.now() - start > timeout) {
-          try {
-            unsub();
-          } catch {}
-          resolve(false);
-        }
+      // Create the profile
+      await setDoc(userRef, {
+        name: displayName || email.split("@")[0],
+        avatar: "/logo.png",
+        bio: "Hey there! I'm new here 👋",
+        personality: "",
+        isBot: false,
+        status: "online",
+        createdAt: serverTimestamp(),
       });
+      
+      console.log("✅ User profile created successfully!");
+    } catch (err: any) {
+      console.error("❌ Failed to create user profile:", err);
+      throw new Error(`Profile creation failed: ${err.message}`);
+    }
+  };
 
-      // safety timeout
-      setTimeout(() => {
-        try {
-          unsub();
-        } catch {}
-        resolve(false);
-      }, timeout);
+  const waitForAuth = (expectedUid: string): Promise<boolean> => {
+    return new Promise((resolve) => {
+      let attempts = 0;
+      const maxAttempts = 20; // 10 seconds max
+
+      const checkAuth = () => {
+        attempts++;
+        const currentUser = auth.currentUser;
+        
+        console.log(`Auth check attempt ${attempts}:`, {
+          currentUser: currentUser?.uid,
+          expected: expectedUid,
+          match: currentUser?.uid === expectedUid
+        });
+
+        if (currentUser && currentUser.uid === expectedUid) {
+          resolve(true);
+        } else if (attempts >= maxAttempts) {
+          console.warn("Auth propagation timeout");
+          resolve(false);
+        } else {
+          setTimeout(checkAuth, 500);
+        }
+      };
+
+      checkAuth();
     });
   };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
     if (password !== confirmPassword) {
       setError("Passwords do not match!");
+      setLoading(false);
       return;
     }
 
     try {
+      console.log("Creating user account...");
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       const uid = cred.user.uid;
       const userEmail = cred.user.email || email;
 
-      const ok = await waitForAuthPropagation(uid);
-      if (!ok) {
-        // proceed but warn (most of the time token will be available; if not user can re-login)
-        console.warn("Auth propagation may be slow — attempted profile creation anyway.");
-      }
+      console.log("User created:", { uid, email: userEmail });
 
-      // create profile (firestore rules require auth.uid === userId)
-      try {
-        await createUserProfile(uid, userEmail);
-      } catch (profileErr) {
-        console.warn("createUserProfile warning:", profileErr);
-      }
+      // Wait for auth to propagate
+      console.log("Waiting for auth propagation...");
+      await waitForAuth(uid);
 
-      await redirectUser(uid);
+      // Create user profile
+      await createUserProfile(uid, userEmail);
+
+      console.log("Signup complete! Redirecting...");
+      router.push("/profiles");
     } catch (err: any) {
       console.error("Signup error:", err);
-      setError(`${err.code || "error"} — ${err.message || "An error occurred"}`);
+      setError(err.message || "Failed to create account");
+      setLoading(false);
     }
   };
 
   const handleGoogleSignup = async () => {
     setError("");
+    setLoading(true);
+
     try {
+      console.log("Starting Google sign-in...");
       const provider = new GoogleAuthProvider();
       const cred = await signInWithPopup(auth, provider);
       const uid = cred.user.uid;
       const userEmail = cred.user.email || "user@notalone.com";
+      const displayName = cred.user.displayName || undefined;
 
-      const ok = await waitForAuthPropagation(uid);
-      if (!ok) {
-        console.warn("Auth propagation slow after Google sign-in.");
-      }
+      console.log("Google sign-in successful:", { 
+        uid, 
+        email: userEmail,
+        displayName 
+      });
 
-      try {
-        await createUserProfile(uid, userEmail);
-      } catch (profileErr) {
-        console.warn("createUserProfile warning:", profileErr);
-      }
+      // Wait for auth to propagate
+      console.log("Waiting for auth propagation...");
+      await waitForAuth(uid);
 
-      await redirectUser(uid);
+      // Create user profile
+      await createUserProfile(uid, userEmail, displayName);
+
+      console.log("Google signup complete! Redirecting...");
+      router.push("/profiles");
     } catch (err: any) {
       console.error("Google signup error:", err);
-      setError(`${err.code || "error"} — ${err.message || "An error occurred"}`);
+      setError(err.message || "Failed to sign in with Google");
+      setLoading(false);
     }
   };
 
@@ -179,22 +170,61 @@ export default function Signup() {
       <main className="relative z-20 flex-1 flex flex-col justify-center items-center px-6">
         <h1 className="text-4xl font-semibold mb-6">Create Account</h1>
 
-        {error && <p className="text-red-500 mb-4">{error}</p>}
+        {error && (
+          <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-4 max-w-sm w-full">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSignup} className="w-full max-w-sm bg-black/80 p-6 rounded-lg shadow-md">
-          <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white" />
-          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white" />
-          <input type="password" placeholder="Confirm Password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white" />
+          <input 
+            type="email" 
+            placeholder="Email" 
+            value={email} 
+            onChange={(e) => setEmail(e.target.value)} 
+            required 
+            disabled={loading}
+            className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white disabled:opacity-50" 
+          />
+          <input 
+            type="password" 
+            placeholder="Password" 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            required 
+            disabled={loading}
+            className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white disabled:opacity-50" 
+          />
+          <input 
+            type="password" 
+            placeholder="Confirm Password" 
+            value={confirmPassword} 
+            onChange={(e) => setConfirmPassword(e.target.value)} 
+            required 
+            disabled={loading}
+            className="w-full p-2 mb-3 rounded bg-black border border-gray-700 text-white disabled:opacity-50" 
+          />
 
           <div className="flex items-center mb-3 text-sm">
-            <input type="checkbox" required className="mr-2" />
+            <input type="checkbox" required disabled={loading} className="mr-2" />
             <span>I agree to the Terms & Conditions</span>
           </div>
 
-          <button type="submit" className="w-full px-6 py-2 bg-white text-black hover:bg-gray-200 transition-all duration-300 font-medium rounded mb-3">Sign Up</button>
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full px-6 py-2 bg-white text-black hover:bg-gray-200 transition-all duration-300 font-medium rounded mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? "Creating Account..." : "Sign Up"}
+          </button>
 
-          <button type="button" onClick={handleGoogleSignup} className="w-full px-6 py-2 bg-black-500 text-white hover:bg-gray-600 transition-all duration-300 font-medium rounded flex items-center justify-center gap-2">
-            <FaGoogle /> Sign up with Google
+          <button 
+            type="button" 
+            onClick={handleGoogleSignup} 
+            disabled={loading}
+            className="w-full px-6 py-2 bg-gray-800 text-white hover:bg-gray-700 transition-all duration-300 font-medium rounded flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FaGoogle /> {loading ? "Signing in..." : "Sign up with Google"}
           </button>
 
           <p className="text-gray-300 text-sm mt-3">
@@ -206,7 +236,6 @@ export default function Signup() {
 
       <footer className="relative z-20 flex justify-between items-center p-6 text-gray-400 text-sm">
         <p>© 2025 Not Alone. All rights reserved.</p>
-        <div className="flex gap-6"></div>
       </footer>
     </div>
   );
