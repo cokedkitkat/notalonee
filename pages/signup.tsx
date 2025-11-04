@@ -157,7 +157,7 @@ export default function Signup() {
   return (
     <div className="relative min-h-screen flex flex-col bg-black text-white font-raleway overflow-hidden">
       <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover z-0">
-        <source src="/bg2.mp4" type="video/mp4" />
+        <source src="/bg4.mp4" type="video/mp4" />
       </video>
       <div className="absolute inset-0 bg-black/70 z-10"></div>
 

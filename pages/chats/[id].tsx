@@ -26,6 +26,7 @@ interface Message {
   text: string;
   senderUid: string;
   timestamp?: any;
+  isBot?: boolean;
 }
 
 export default function ChatPage() {
@@ -206,7 +207,7 @@ export default function ChatPage() {
     setNewMessage("");
 
     try {
-      await addMessageToChat(chatId as string, user.uid, text);
+      await addMessageToChat(chatId as string, user.uid, text, false);
     } catch (err) {
       console.error("Failed to add message:", err);
       return;
@@ -232,7 +233,7 @@ export default function ChatPage() {
         const delay = Math.min(4000, reply.length * 60);
         setTimeout(async () => {
           try {
-            await addMessageToChat(chatId as string, contact.id, reply);
+            await addMessageToChat(chatId as string, user.uid, reply, true);
           } catch (err) {
             console.error("Failed to save bot reply:", err);
           } finally {
@@ -283,7 +284,7 @@ export default function ChatPage() {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {messages.map((msg) => {
-                const isUser = msg.senderUid === user?.uid;
+                const isUser = !msg.isBot;
                 return (
                   <div
                     key={msg.id}

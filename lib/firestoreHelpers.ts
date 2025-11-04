@@ -59,7 +59,8 @@ export async function createOrGetChat(
 export async function addMessageToChat(
   chatId: string,
   senderUid: string,
-  text: string
+  text: string,
+  isBot: boolean = false
 ) {
   const chatRef = doc(db, "chats", chatId);
   const chatSnap = await getDoc(chatRef);
@@ -78,6 +79,7 @@ export async function addMessageToChat(
     timestamp: serverTimestamp(),
     participants,
     readBy: [senderUid], // sender has already "read" their own message
+    isBot,
   });
 
   await updateDoc(chatRef, {
