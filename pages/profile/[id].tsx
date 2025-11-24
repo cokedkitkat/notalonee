@@ -54,37 +54,66 @@ export default function ProfileDetail() {
     loadProfile();
   }, [id]);
 
-  // Start chat
-  const handleMessage = async () => {
-    if (!user) {
-      alert("Please log in to start a chat");
-      router.push("/login");
-      return;
-    }
+
+
+ // Start chat
+const handleMessage = async () => {
+  // ADD THIS CHECK FIRST
+  if (!user) {
+    console.log("User not loaded yet, redirecting to login");
+    alert("Please log in to start a chat");
+    router.push("/login");
+    return;
+  }
+  
+  if (!profile) {
+    console.log("Profile not loaded yet");
+    return;
+  }
+
+  try {
+    console.log("Creating chat with:", profile.id);
     
-    if (!profile) return;
-
+    // Wait for auth token to be ready
     try {
-      console.log("Creating chat with:", profile.id);
-      
-      const chatId = await createOrGetChat(
-        user.uid,
-        profile.id,
-        profile.personality || null,
-        {
-          name: profile.name,
-          avatar: profile.avatar,
-          status: profile.status || "online",
-        }
-      );
-
-      console.log("Chat created:", chatId);
-      router.push(`/chats/${chatId}`);
-    } catch (err: any) {
-      console.error("Error starting chat:", err);
-      alert("Failed to start chat. Please try again.");
+      await user.getIdToken(true);
+      console.log("Auth token confirmed");
+    } catch (tokenErr) {
+      console.error("Token not ready:", tokenErr);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await user.getIdToken(true);
     }
-  };
+
+    // Debug logging
+    console.log("About to create chat with data:", {
+      userUid: user.uid,
+      profileId: profile.id,
+      personality: profile.personality,
+      botProfile: {
+        name: profile.name,
+        avatar: profile.avatar,
+        status: profile.status
+      }
+    });
+    
+    const chatId = await createOrGetChat(
+      user.uid,
+      profile.id,
+      profile.personality || null,
+      {
+        name: profile.name,
+        avatar: profile.avatar,
+        status: profile.status || "online",
+      }
+    );
+
+    console.log("Chat created:", chatId);
+    router.push(`/chats/${chatId}`);
+  } catch (err: any) {
+    console.error("Error starting chat:", err);
+    alert("Failed to start chat. Please try again.");
+  }
+};
 
   if (loading) {
     return (
@@ -155,11 +184,12 @@ export default function ProfileDetail() {
           )}
 
           <button
-            onClick={handleMessage}
-            className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg transition font-medium"
-          >
-            Start Chatting
-          </button>
+  onClick={handleMessage}
+  disabled={!user || !profile}
+  className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+>
+  {!user ? "Loading..." : "Start Chatting"}
+</button>
         </div>
       </main>
     </div>

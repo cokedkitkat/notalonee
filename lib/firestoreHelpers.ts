@@ -34,19 +34,32 @@ export async function createOrGetChat(
 ): Promise<string> {
   const chatId = [uidA, uidB].sort().join("_");
   const chatRef = doc(db, "chats", chatId);
-  const snap = await getDoc(chatRef);
+  
+  try {
+    const snap = await getDoc(chatRef);
 
-  if (!snap.exists()) {
-    await setDoc(chatRef, {
-      id: chatId,
-      participants: [uidA, uidB],
-      botPersonality: botPersonality || null,
-      botProfile: botProfile || null,
-      lastMessage: "",
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    });
+    if (!snap.exists()) {
+      console.log("Creating new chat:", chatId);
+      await setDoc(chatRef, {
+        id: chatId,
+        participants: [uidA, uidB],
+        botPersonality: botPersonality || null,
+        botProfile: botProfile || null,
+        lastMessage: "",
+        updatedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      });
+      console.log("Chat created successfully");
+    } else {
+      console.log("Chat already exists");
+    }
+
+    return chatId;
+  } catch (err) {
+    console.error("Error in createOrGetChat:", err);
+    throw err;
   }
+
 
   return chatId;
 }

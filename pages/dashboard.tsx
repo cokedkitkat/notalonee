@@ -85,7 +85,7 @@ export default function Dashboard() {
             description="💬 Discover AI companions and start meaningful conversations"
             link="/profiles"
             icon={<FaRobot />}
-            color="bg-gradient-to-br from-blue-900 to-blue-800"
+            color="bg-gradient-to-br from-gray-900 to-gray-800"
           />
 
           <DashboardCard
@@ -93,7 +93,7 @@ export default function Dashboard() {
             description="💭 Continue your conversations and connect with companions"
             link="/chats"
             icon={<FaRobot />}
-            color="bg-gradient-to-br from-purple-900 to-purple-800"
+            color="bg-gradient-to-br from-purple-600 to-purple-600"
           />
 
           <DashboardCard
