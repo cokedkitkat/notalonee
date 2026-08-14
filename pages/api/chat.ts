@@ -3,8 +3,11 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import OpenAI from "openai";
 import { personaPrompts, defaultPersona } from "../../lib/personaPrompts";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+// Groq is OpenAI-compatible, so we reuse the same "openai" package —
+// we just point it at Groq's servers and use a Groq API key instead.
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -23,9 +26,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const persona = personality || defaultPersona;
     const systemPrompt = personaPrompts[persona] || personaPrompts[defaultPersona];
 
-    // Call OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // change if needed
+    // Call Groq (free tier)
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // free, fast, good quality
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: message },
